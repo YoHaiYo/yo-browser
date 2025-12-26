@@ -2,22 +2,19 @@ package com.yo.browser
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.view.View
 import android.view.WindowManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
-    private val handler = Handler(Looper.getMainLooper())
-    private var jsInjectionRunnable: Runnable? = null
-    private val backgroundPlaybackHelper = BackgroundPlaybackHelper()
-    private val adBlockHelper = AdBlockHelper()
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,63 +45,31 @@ class MainActivity : AppCompatActivity() {
             displayZoomControls = false
             loadWithOverviewMode = true
             useWideViewPort = true
-            javaScriptCanOpenWindowsAutomatically = true
-            mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
         }
-        
-        // 백그라운드 재생을 위해 화면이 꺼져도 계속 실행
-        webView.keepScreenOn = false
 
-        // 광고 차단 WebViewClient 설정
-        webView.webViewClient = AdBlockWebViewClient(
-            onPageStarted = { view, url, favicon ->
-                startAudioService()
-            },
-            onPageFinished = { view, url ->
-                // 페이지 로드 완료 후 JS 주입
-                view?.postDelayed({
-                    backgroundPlaybackHelper.injectBackgroundPlaybackJS(webView)
-                    adBlockHelper.injectAdBlockJS(webView)
-                    // 주기적으로 재주입 (유튜브가 JS를 덮어쓸 수 있음)
-                    view.postDelayed({
-                        backgroundPlaybackHelper.injectBackgroundPlaybackJS(webView)
-                        adBlockHelper.injectAdBlockJS(webView)
-                    }, 2000)
-                    view.postDelayed({
-                        backgroundPlaybackHelper.injectBackgroundPlaybackJS(webView)
-                        adBlockHelper.injectAdBlockJS(webView)
-                    }, 5000)
-                }, 500)
+        webView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): Boolean {
+                return false
             }
-        )
+
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                startAudioService()
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                injectBackgroundPlaybackJS()
+            }
+        }
 
         webView.webChromeClient = WebChromeClient()
 
-        // 주기적으로 JS 재주입 시작
-        startPeriodicJSInjection()
-
         // 유튜브 모바일 사이트 로드
         webView.loadUrl("https://m.youtube.com")
-    }
-    
-    private fun startPeriodicJSInjection() {
-        jsInjectionRunnable = object : Runnable {
-            override fun run() {
-                if (::webView.isInitialized) {
-                    backgroundPlaybackHelper.injectBackgroundPlaybackJS(webView)
-                    adBlockHelper.injectAdBlockJS(webView)
-                    handler.postDelayed(this, 2000) // 2초마다 재주입
-                }
-            }
-        }
-        handler.postDelayed(jsInjectionRunnable!!, 1000)
-    }
-    
-    private fun stopPeriodicJSInjection() {
-        jsInjectionRunnable?.let {
-            handler.removeCallbacks(it)
-        }
     }
 
     private fun startAudioService() {
@@ -116,66 +81,65 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun injectBackgroundPlaybackJS() {
+        val jsCode = """
+            (function() {
+                try {
+                    // visibilitychange 이벤트 방지
+                    Object.defineProperty(document, 'hidden', {
+                        get: function() { return false; },
+                        configurable: true
+                    });
+                    
+                    Object.defineProperty(document, 'visibilityState', {
+                        get: function() { return 'visible'; },
+                        configurable: true
+                    });
+                    
+                    // pagehide 이벤트 방지
+                    var originalAddEventListener = window.addEventListener;
+                    window.addEventListener = function(type, listener, options) {
+                        if (type === 'pagehide' || type === 'visibilitychange') {
+                            return;
+                        }
+                        originalAddEventListener.call(this, type, listener, options);
+                    };
+                    
+                    // beforeunload 방지
+                    window.addEventListener('beforeunload', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return '';
+                    }, true);
+                    
+                    // blur 이벤트 방지
+                    window.addEventListener('blur', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }, true);
+                } catch(e) {
+                    console.log('JS injection error:', e);
+                }
+            })();
+        """.trimIndent()
+        
+        webView.evaluateJavascript(jsCode, null)
+    }
 
     override fun onResume() {
         super.onResume()
-        // WebView를 resume하지 않음 - 백그라운드 재생을 위해
-        // webView.onResume() 호출하지 않음
-        // 즉시 JS 재주입
-        if (::webView.isInitialized) {
-            backgroundPlaybackHelper.injectBackgroundPlaybackJS(webView)
-            adBlockHelper.injectAdBlockJS(webView)
-            handler.postDelayed({
-                backgroundPlaybackHelper.injectBackgroundPlaybackJS(webView)
-                adBlockHelper.injectAdBlockJS(webView)
-            }, 300)
-            handler.postDelayed({
-                backgroundPlaybackHelper.injectBackgroundPlaybackJS(webView)
-                adBlockHelper.injectAdBlockJS(webView)
-            }, 1000)
-        }
+        webView.onResume()
+        injectBackgroundPlaybackJS()
     }
 
     override fun onPause() {
         super.onPause()
-        // webView.onPause() 호출하지 않음 - 백그라운드 재생을 위해
-        // 백그라운드로 가도 JS 재주입 계속
-        if (::webView.isInitialized) {
-            handler.postDelayed({
-                backgroundPlaybackHelper.injectBackgroundPlaybackJS(webView)
-                adBlockHelper.injectAdBlockJS(webView)
-            }, 200)
-            handler.postDelayed({
-                backgroundPlaybackHelper.injectBackgroundPlaybackJS(webView)
-                adBlockHelper.injectAdBlockJS(webView)
-            }, 800)
-        }
-    }
-    
-    override fun onStop() {
-        super.onStop()
-        // 백그라운드로 가도 JS 재주입 계속
-        if (::webView.isInitialized) {
-            handler.postDelayed({
-                backgroundPlaybackHelper.injectBackgroundPlaybackJS(webView)
-                adBlockHelper.injectAdBlockJS(webView)
-            }, 300)
-            handler.postDelayed({
-                backgroundPlaybackHelper.injectBackgroundPlaybackJS(webView)
-                adBlockHelper.injectAdBlockJS(webView)
-            }, 1500)
-        }
+        webView.onPause()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        stopPeriodicJSInjection()
-        // 서비스 종료
-        val serviceIntent = Intent(this, AudioService::class.java)
-        stopService(serviceIntent)
-        if (::webView.isInitialized) {
-            webView.destroy()
-        }
+        webView.destroy()
     }
 
     override fun onBackPressed() {

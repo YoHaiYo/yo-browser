@@ -8,10 +8,71 @@ class AdBlockHelper {
         val jsCode = """
             (function() {
                 try {
-                    // 광고 요소 제거 함수
-                    function removeAds() {
+                    // 광고 감지 및 강제 스킵 함수
+                    function skipAds() {
                         try {
-                            // 유튜브 광고 관련 요소 제거
+                            // 1. 광고 재생 상태 감지
+                            var adShowing = document.querySelector('.ad-showing');
+                            var adInterrupting = document.querySelector('.ad-interrupting');
+                            
+                            // 2. 비디오 요소 찾기
+                            var videos = document.querySelectorAll('video');
+                            
+                            for (var i = 0; i < videos.length; i++) {
+                                var video = videos[i];
+                                if (!video || video.paused) continue;
+                                
+                                var isAd = false;
+                                
+                                // 광고 클래스로 감지
+                                if (adShowing || adInterrupting) {
+                                    var container = video.closest('.ad-showing, .ad-interrupting, #player-ads, .ytp-ad-module');
+                                    if (container) {
+                                        isAd = true;
+                                    }
+                                }
+                                
+                                // 비디오 시간으로 광고 감지
+                                if (!isAd && video.currentTime < 1 && video.duration > 0 && video.duration < 60) {
+                                    // 현재 시간이 1초 미만이고, 재생 시간이 60초 미만이면 광고로 판단
+                                    // (일반 유튜브 영상은 최소 수십 초 이상)
+                                    var parent = video.parentElement;
+                                    if (parent && (parent.classList.contains('ad-showing') || 
+                                                   parent.classList.contains('ad-interrupting') ||
+                                                   parent.id === 'player-ads')) {
+                                        isAd = true;
+                                    }
+                                }
+                                
+                                // 광고로 판단되면 강제 스킵
+                                if (isAd && video.duration > 0) {
+                                    try {
+                                        video.currentTime = video.duration;
+                                        video.play();
+                                    } catch(e) {}
+                                }
+                            }
+                            
+                            // 3. 광고 스킵 버튼 자동 클릭
+                            try {
+                                var skipButtons = document.querySelectorAll('.ytp-ad-skip-button, .ytp-ad-skip-button-modern');
+                                skipButtons.forEach(function(btn) {
+                                    if (btn && btn.offsetParent !== null) {
+                                        try {
+                                            btn.click();
+                                        } catch(e) {}
+                                    }
+                                });
+                            } catch(e) {}
+                            
+                        } catch(e) {
+                            console.log('Ad skip error:', e);
+                        }
+                    }
+                    
+                    // 4. 광고 DOM 요소 숨기기 (video element는 제거하지 않음)
+                    function hideAdElements() {
+                        try {
                             var adSelectors = [
                                 'ytd-ad-slot-renderer',
                                 'ytd-display-ad-renderer',
@@ -19,74 +80,35 @@ class AdBlockHelper {
                                 'ytd-video-masthead-ad-v3-renderer',
                                 'ytd-promoted-sparkles-web-renderer',
                                 'ytd-promoted-video-renderer',
-                                '.video-ads',
-                                '.ad-container',
-                                '.ad-div',
-                                '.advertisement',
-                                '[class*="ad-"]',
-                                '[id*="ad-"]',
-                                '[id*="advertisement"]',
-                                '.ytp-ad-module',
                                 '.ytp-ad-overlay-container',
                                 '.ytp-ad-overlay-slot',
                                 '.ytp-ad-text',
-                                '.ytp-ad-skip-button',
-                                '.ytp-ad-overlay-close-button',
-                                '#player-ads',
-                                '.ad-showing',
-                                '.ad-interrupting',
-                                '.ad-overlay',
-                                'ytd-ad-slot-renderer',
-                                'ytd-display-ad-renderer',
-                                'ytd-companion-slot-renderer'
+                                '.ytp-ad-overlay-close-button'
                             ];
                             
                             adSelectors.forEach(function(selector) {
                                 try {
                                     var elements = document.querySelectorAll(selector);
                                     elements.forEach(function(el) {
-                                        if (el && el.parentNode) {
+                                        // video element는 제거하지 않음
+                                        if (el && el.tagName !== 'VIDEO' && !el.querySelector('video')) {
                                             el.style.display = 'none';
-                                            el.remove();
                                         }
                                     });
                                 } catch(e) {}
                             });
                             
-                            // 광고 오버레이 제거
+                            // 광고 오버레이 숨기기
                             try {
                                 var overlays = document.querySelectorAll('.ytp-ad-overlay-container, .ytp-ad-overlay-slot, .ad-overlay');
                                 overlays.forEach(function(overlay) {
-                                    overlay.style.display = 'none';
-                                    overlay.remove();
-                                });
-                            } catch(e) {}
-                            
-                            // 광고 스킵 버튼 클릭 시도
-                            try {
-                                var skipButtons = document.querySelectorAll('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, [class*="skip"]');
-                                skipButtons.forEach(function(btn) {
-                                    if (btn && btn.offsetParent !== null) {
-                                        btn.click();
+                                    if (overlay && overlay.tagName !== 'VIDEO') {
+                                        overlay.style.display = 'none';
                                     }
                                 });
                             } catch(e) {}
                             
-                            // 비디오 광고 제거
-                            try {
-                                var videoAds = document.querySelectorAll('video.ad-showing, video.ad-interrupting');
-                                videoAds.forEach(function(video) {
-                                    if (video && video.parentNode) {
-                                        var parent = video.parentNode;
-                                        if (parent && parent.classList && (parent.classList.contains('ad-showing') || parent.classList.contains('ad-interrupting'))) {
-                                            parent.style.display = 'none';
-                                            parent.remove();
-                                        }
-                                    }
-                                });
-                            } catch(e) {}
-                            
-                            // 광고 관련 iframe 제거
+                            // 광고 관련 iframe 숨기기
                             try {
                                 var iframes = document.querySelectorAll('iframe');
                                 iframes.forEach(function(iframe) {
@@ -97,36 +119,25 @@ class AdBlockHelper {
                                         src.includes('adservice') ||
                                         src.includes('pagead')) {
                                         iframe.style.display = 'none';
-                                        iframe.remove();
                                     }
                                 });
                             } catch(e) {}
                             
                         } catch(e) {
-                            console.log('Ad removal error:', e);
+                            console.log('Ad hide error:', e);
                         }
                     }
                     
                     // 즉시 실행
-                    removeAds();
+                    skipAds();
+                    hideAdElements();
                     
-                    // 주기적으로 광고 제거 (이미 있으면 중복 방지)
+                    // 주기적으로 실행 (500ms)
                     if (!window._adBlockInterval) {
                         window._adBlockInterval = setInterval(function() {
-                            removeAds();
-                        }, 1000);
-                    }
-                    
-                    // DOM 변경 감지하여 새로 추가된 광고 제거
-                    if (!window._adBlockObserver) {
-                        window._adBlockObserver = new MutationObserver(function(mutations) {
-                            removeAds();
-                        });
-                        
-                        window._adBlockObserver.observe(document.body, {
-                            childList: true,
-                            subtree: true
-                        });
+                            skipAds();
+                            hideAdElements();
+                        }, 500);
                     }
                     
                 } catch(e) {
@@ -142,4 +153,3 @@ class AdBlockHelper {
         }
     }
 }
-

@@ -11,28 +11,15 @@ class AdBlockWebViewClient(
     private val onPageFinished: ((WebView?, String?) -> Unit)? = null
 ) : WebViewClient() {
 
-    // 광고 관련 URL 패턴
+    // 최소한의 광고 관련 URL 패턴만 차단 (영상 스트림은 절대 차단하지 않음)
     private val adPatterns = listOf(
-        "googleads",
+        "youtube.com/api/stats/ads",
+        "youtube.com/pagead/",
         "doubleclick",
         "googlesyndication",
-        "pagead",
         "adservice",
-        "youtube.com/api/stats/ads",
-        "youtube.com/pagead",
-        "youtube.com/ptracking",
-        "youtube.com/get_video_info",
-        "ads.youtube.com",
-        "adservice.google",
-        "googleadservices",
-        "googletagmanager",
-        "googletagservices",
-        "advertising.com",
-        "adform.net",
-        "adsafeprotected.com",
-        "adnxs.com",
-        "adsrvr.org",
-        "adtechus.com"
+        "/tracking",
+        "/beacon"
     )
 
     override fun shouldInterceptRequest(
@@ -41,7 +28,13 @@ class AdBlockWebViewClient(
     ): WebResourceResponse? {
         val url = request?.url?.toString() ?: return super.shouldInterceptRequest(view, request)
 
-        // 광고 URL 차단
+        // 영상 스트림은 절대 차단하지 않음
+        if (url.contains("googlevideo.com/videoplayback") || 
+            url.contains("videoplayback")) {
+            return super.shouldInterceptRequest(view, request)
+        }
+
+        // 광고 URL만 차단
         if (isAdRequest(url)) {
             return WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
         }
@@ -73,4 +66,3 @@ class AdBlockWebViewClient(
         onPageFinished?.invoke(view, url)
     }
 }
-
